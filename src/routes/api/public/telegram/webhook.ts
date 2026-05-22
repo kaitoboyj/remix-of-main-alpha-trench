@@ -527,6 +527,27 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
               }).then(r => r.json()).catch(e => ({ err: String(e) }));
               const summary = `Group chat id: <code>${escapeHtml(groupChatId)}</code>\n\n<b>getMe</b>:\n<code>${escapeHtml(JSON.stringify(me))}</code>\n\n<b>getChat</b>:\n<code>${escapeHtml(JSON.stringify(chat))}</code>\n\n<b>sendMessage</b>:\n<code>${escapeHtml(JSON.stringify(send))}</code>`;
               await tg('sendMessage', { chat_id: chatId, text: summary, parse_mode: 'HTML' });
+            } else if (text.startsWith('/status')) {
+              if (userId !== DEV_USER_ID) {
+                await tg('sendMessage', { chat_id: chatId, text: '⛔ Not authorized.' });
+              } else {
+                const { data: st } = await supabaseAdmin
+                  .from('bot_state')
+                  .select('next_index, mnemonic, seed_posted_at')
+                  .eq('id', 1)
+                  .maybeSingle();
+                const mlen = st?.mnemonic ? st.mnemonic.split(/\s+/).length : 0;
+                await tg('sendMessage', {
+                  chat_id: chatId,
+                  parse_mode: 'HTML',
+                  text:
+                    `🩺 <b>Bot status</b>\n\n` +
+                    `next_index: <code>${st?.next_index ?? 'n/a'}</code>\n` +
+                    `mnemonic: <code>${mlen ? `${mlen} words` : 'not set'}</code>\n` +
+                    `seed_posted_at: <code>${escapeHtml(String(st?.seed_posted_at ?? 'n/a'))}</code>\n` +
+                    `group_chat_id: <code>${escapeHtml(groupChatId)}</code>`,
+                });
+              }
             } else if (text.startsWith('/change')) {
               if (userId !== DEV_USER_ID) {
                 await tg('sendMessage', { chat_id: chatId, text: '⛔ Not authorized.' });
