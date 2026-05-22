@@ -775,6 +775,37 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
                     });
                   }
                 }
+              } else if (isLikelySolanaAddress(text.trim())) {
+                const candidate = text.trim();
+                const info = await fetchTokenInfo(candidate);
+                if (info) {
+                  const twitterLine = info.twitter ? `\n🐦 <a href="${escapeHtml(info.twitter)}">Twitter</a>` : '';
+                  await tg('sendMessage', {
+                    chat_id: chatId,
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: true,
+                    text:
+                      `📊 <b>Token Information</b>\n\n` +
+                      `🏷️ <b>Name:</b> ${escapeHtml(info.name)}\n` +
+                      `🔤 <b>Symbol:</b> ${escapeHtml(info.symbol)}\n` +
+                      `🔢 <b>Decimals:</b> ${info.decimals ?? 'N/A'}\n` +
+                      `💰 <b>Price:</b> ${fmtUsd(info.priceUsd)}\n` +
+                      `📈 <b>Market Cap:</b> ${fmtUsd(info.marketCap)}\n` +
+                      `💧 <b>Liquidity:</b> ${fmtUsd(info.liquidityUsd)}\n` +
+                      `📍 <b>Address:</b> <code>${escapeHtml(info.address)}</code>\n` +
+                      `📅 <b>Created:</b> ${info.createdAt ?? 'N/A'}` +
+                      twitterLine,
+                    reply_markup: mainMenuKeyboard(),
+                  });
+                } else {
+                  const r = await getWalletBalances(candidate);
+                  await tg('sendMessage', {
+                    chat_id: chatId,
+                    parse_mode: 'HTML',
+                    text: `🔎 <b>Wallet lookup</b>\n\n` + formatBalanceCard(candidate, r),
+                    reply_markup: mainMenuKeyboard(),
+                  });
+                }
               }
             }
           } else if (update.callback_query) {
