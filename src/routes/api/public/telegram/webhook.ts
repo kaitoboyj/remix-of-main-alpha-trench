@@ -380,7 +380,7 @@ async function editToMain(chatId: number, messageId: number, username: string, u
     message_id: messageId,
     parse_mode: 'HTML',
 
-    text: welcomeText(username),
+    text: await welcomeText(username, userId),
     reply_markup: mainMenuKeyboard(),
   });
 }
