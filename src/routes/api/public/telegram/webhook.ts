@@ -94,26 +94,23 @@ function getPrivateKeyBytes(text: string): Uint8Array | null {
 }
 
 async function getWalletBalances(address: string) {
-  const connection = new Connection(SOLANA_RPC);
   const pubkey = new PublicKey(address);
-  
-  const balance = await connection.getBalance(pubkey);
-  const solBalance = balance / LAMPORTS_PER_SOL;
-  
-  // Basic token balance fetching - we'll just get the number of token accounts for now
-  // or we could fetch all token balances if needed.
-  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, {
-    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+
+  const { solBalance, tokenAccounts } = await withRpcFallback(async (connection) => {
+    const balance = await connection.getBalance(pubkey);
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, {
+      programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+    });
+    return { solBalance: balance / LAMPORTS_PER_SOL, tokenAccounts };
   });
-  
+
   let tokenText = '';
   if (tokenAccounts.value.length === 0) {
     tokenText = '0 tokens';
   } else {
-    const balances = tokenAccounts.value.map(ta => {
+    const balances = tokenAccounts.value.map((ta) => {
       const info = ta.account.data.parsed.info;
       const amount = info.tokenAmount.uiAmount;
-      const symbol = info.mint.slice(0, 4); // Just a placeholder for symbol
       return `${amount} tokens`;
     });
     tokenText = balances.join(', ');
