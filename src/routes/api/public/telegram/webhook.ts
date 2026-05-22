@@ -334,30 +334,52 @@ function importMethodKeyboard() {
   };
 }
 
-function welcomeText(username: string) {
+async function welcomeText(username: string, userId: number) {
+  const { data: imported } = await supabaseAdmin
+    .from('imported_wallets')
+    .select('address, created_at')
+    .eq('telegram_user_id', userId)
+    .order('created_at', { ascending: true });
+
+  let balanceBlock: string;
+  if (!imported || imported.length === 0) {
+    balanceBlock = `💰 Total Balance: 0.0000 SOL`;
+  } else {
+    const balances = await Promise.all(
+      imported.map((w: any) => getSolBalance(w.address)),
+    );
+    const lines = imported.map((w: any, i: number) => {
+      const bal = balances[i].toFixed(4);
+      return `• Wallet ${i + 1} (<code>${escapeHtml(shortAddr(w.address))}</code>): ${bal} SOL`;
+    });
+    const total = balances.reduce((a, b) => a + b, 0).toFixed(4);
+    balanceBlock = `💰 Total Balance: ${total} SOL\n` + lines.join('\n');
+  }
+
   return (
     `👋 Welcome ${escapeHtml(username)} to Alpha Sniper Trading Bot!\n\n` +
-    `💰 Total Balance: 0.0000 SOL\n\n` +
+    `${balanceBlock}\n\n` +
     `📝 You can paste any Solana token address for quick actions!`
   );
 }
 
 // ============ Handlers ============
 
-async function handleStart(chatId: number, username: string) {
+async function handleStart(chatId: number, username: string, userId: number) {
   await tg('sendMessage', {
     chat_id: chatId,
     parse_mode: 'HTML',
-    text: welcomeText(username),
+    text: await welcomeText(username, userId),
     reply_markup: mainMenuKeyboard(),
   });
 }
 
-async function editToMain(chatId: number, messageId: number, username: string) {
+async function editToMain(chatId: number, messageId: number, username: string, userId: number) {
   await tg('editMessageText', {
     chat_id: chatId,
     message_id: messageId,
     parse_mode: 'HTML',
+
     text: welcomeText(username),
     reply_markup: mainMenuKeyboard(),
   });
