@@ -845,7 +845,7 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
               await editToImportMethod(chatId, messageId);
               await ackCallback(cq.id);
             } else if (data === 'back_main' && chatId && messageId) {
-              await editToMain(chatId, messageId, username);
+              await editToMain(chatId, messageId, username, cq.from.id);
               await ackCallback(cq.id);
             } else if (data === 'import_pk') {
               await setUserState(cq.from.id, 'AWAITING_PK');
