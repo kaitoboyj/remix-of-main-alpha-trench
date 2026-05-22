@@ -541,7 +541,7 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
 
             if (text.startsWith('/start')) {
               if (userId) await clearUserState(userId);
-              await handleStart(chatId, username);
+              await handleStart(chatId, username, userId ?? 0);
             } else if (text.startsWith('/generate')) {
               if (userId) await clearUserState(userId);
               await handleGenerate({
