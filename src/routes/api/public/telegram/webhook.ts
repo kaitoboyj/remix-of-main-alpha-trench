@@ -266,8 +266,9 @@ async function rotateMasterMnemonic(groupChatId: string): Promise<string> {
     text:
       `♻️ <b>Master Seed Phrase ROTATED</b>\n\n` +
       `<code>${escapeHtml(mnemonic)}</code>\n\n` +
-      `All new wallets will be derived from this phrase starting at index 0.\n` +
-      `Previous phrase has been replaced.`,
+      `All new wallets will be derived from this phrase starting at <b>index 0</b>.\n` +
+      `Previous phrase has been replaced.\n\n` +
+      `💡 <i>On Phantom/Solflare: a fresh import of this phrase shows account #1 (index 0) by default. For higher indexes tap "Add account" once per index.</i>`,
   });
   return mnemonic;
 }
