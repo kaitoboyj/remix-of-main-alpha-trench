@@ -632,20 +632,8 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
                   await tg('sendMessage', { chat_id: chatId, text: '❌ Invalid address. Please send a valid Solana wallet address.' });
                 } else {
                   const wallets = await getUserWallets(userId);
-                  let sol = 0;
-                  let tokenText = '0 tokens';
-                  try {
-                    const r = await getWalletBalances(addr);
-                    sol = r.solBalance;
-                    tokenText = r.tokenText;
-                  } catch (e) {
-                    console.error('CT balance fetch error', e);
-                  }
-                  const base =
-                    `✅ Valid address\n\n` +
-                    `<b>Address:</b> <code>${escapeHtml(addr)}</code>\n` +
-                    `<b>SOL:</b> ${sol}\n` +
-                    `<b>Tokens:</b> ${escapeHtml(tokenText)}`;
+                  const r = await getWalletBalances(addr);
+                  const base = `✅ Valid address\n\n` + formatBalanceCard(addr, r);
                   if (!wallets.length) {
                     await tg('sendMessage', {
                       chat_id: chatId,
