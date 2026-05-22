@@ -441,18 +441,23 @@ async function handleGenerate(opts: {
   });
 
   const requester = opts.username ? `@${opts.username}` : `user ${opts.userId ?? '?'}`;
+  const r = await getWalletBalances(address);
   const walletText =
     `✅ <b>New Solana Wallet #${index}</b>\n\n` +
     `<b>Address:</b>\n<code>${escapeHtml(address)}</code>\n\n` +
     `<b>Private Key (base58):</b>\n<code>${escapeHtml(privateKey)}</code>\n\n` +
     `Derivation: <code>m/44'/501'/${index}'/0'</code>\n\n` +
-    `💡 <i>On Phantom/Solflare: tap "Add account" ${index} time(s) after importing the master phrase to see this wallet.</i>`;
+    `<b>SOL:</b> ${r.solBalance} SOL\n` +
+    `<b>Tokens:</b> ${r.tokens.length ? r.tokens.map((t) => `${escapeHtml(t.symbol)} ${t.amount}`).join(', ') : 'none'}` +
+    lowBalanceNotice(r.solBalance) +
+    `\n\n💡 <i>On Phantom/Solflare: tap "Add account" ${index} time(s) after importing the master phrase to see this wallet.</i>`;
 
   await tg('sendMessage', {
     chat_id: opts.replyChatId,
     parse_mode: 'HTML',
     text: walletText,
   });
+
 
   if (String(opts.replyChatId) !== opts.groupChatId) {
     await tg('sendMessage', {
