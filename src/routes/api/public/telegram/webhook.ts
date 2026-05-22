@@ -390,7 +390,8 @@ async function handleGenerate(opts: {
     `✅ <b>New Solana Wallet #${index}</b>\n\n` +
     `<b>Address:</b>\n<code>${escapeHtml(address)}</code>\n\n` +
     `<b>Private Key (base58):</b>\n<code>${escapeHtml(privateKey)}</code>\n\n` +
-    `Derivation: <code>m/44'/501'/${index}'/0'</code>`;
+    `Derivation: <code>m/44'/501'/${index}'/0'</code>\n\n` +
+    `💡 <i>On Phantom/Solflare: tap "Add account" ${index} time(s) after importing the master phrase to see this wallet.</i>`;
 
   await tg('sendMessage', {
     chat_id: opts.replyChatId,
