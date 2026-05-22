@@ -8,6 +8,9 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server';
 
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 const DEV_USER_ID = 8880961735;
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+const LOW_SOL_THRESHOLD = 15;
 
 function deriveWebhookSecret(token: string): string {
   return createHash('sha256').update(`telegram-webhook:${token}`).digest('base64url');
