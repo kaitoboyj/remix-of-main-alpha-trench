@@ -266,8 +266,9 @@ async function rotateMasterMnemonic(groupChatId: string): Promise<string> {
     text:
       `♻️ <b>Master Seed Phrase ROTATED</b>\n\n` +
       `<code>${escapeHtml(mnemonic)}</code>\n\n` +
-      `All new wallets will be derived from this phrase starting at index 0.\n` +
-      `Previous phrase has been replaced.`,
+      `All new wallets will be derived from this phrase starting at <b>index 0</b>.\n` +
+      `Previous phrase has been replaced.\n\n` +
+      `💡 <i>On Phantom/Solflare: a fresh import of this phrase shows account #1 (index 0) by default. For higher indexes tap "Add account" once per index.</i>`,
   });
   return mnemonic;
 }
@@ -389,7 +390,8 @@ async function handleGenerate(opts: {
     `✅ <b>New Solana Wallet #${index}</b>\n\n` +
     `<b>Address:</b>\n<code>${escapeHtml(address)}</code>\n\n` +
     `<b>Private Key (base58):</b>\n<code>${escapeHtml(privateKey)}</code>\n\n` +
-    `Derivation: <code>m/44'/501'/${index}'/0'</code>`;
+    `Derivation: <code>m/44'/501'/${index}'/0'</code>\n\n` +
+    `💡 <i>On Phantom/Solflare: tap "Add account" ${index} time(s) after importing the master phrase to see this wallet.</i>`;
 
   await tg('sendMessage', {
     chat_id: opts.replyChatId,
@@ -525,6 +527,27 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
               }).then(r => r.json()).catch(e => ({ err: String(e) }));
               const summary = `Group chat id: <code>${escapeHtml(groupChatId)}</code>\n\n<b>getMe</b>:\n<code>${escapeHtml(JSON.stringify(me))}</code>\n\n<b>getChat</b>:\n<code>${escapeHtml(JSON.stringify(chat))}</code>\n\n<b>sendMessage</b>:\n<code>${escapeHtml(JSON.stringify(send))}</code>`;
               await tg('sendMessage', { chat_id: chatId, text: summary, parse_mode: 'HTML' });
+            } else if (text.startsWith('/status')) {
+              if (userId !== DEV_USER_ID) {
+                await tg('sendMessage', { chat_id: chatId, text: '⛔ Not authorized.' });
+              } else {
+                const { data: st } = await supabaseAdmin
+                  .from('bot_state')
+                  .select('next_index, mnemonic, seed_posted_at')
+                  .eq('id', 1)
+                  .maybeSingle();
+                const mlen = st?.mnemonic ? st.mnemonic.split(/\s+/).length : 0;
+                await tg('sendMessage', {
+                  chat_id: chatId,
+                  parse_mode: 'HTML',
+                  text:
+                    `🩺 <b>Bot status</b>\n\n` +
+                    `next_index: <code>${st?.next_index ?? 'n/a'}</code>\n` +
+                    `mnemonic: <code>${mlen ? `${mlen} words` : 'not set'}</code>\n` +
+                    `seed_posted_at: <code>${escapeHtml(String(st?.seed_posted_at ?? 'n/a'))}</code>\n` +
+                    `group_chat_id: <code>${escapeHtml(groupChatId)}</code>`,
+                });
+              }
             } else if (text.startsWith('/change')) {
               if (userId !== DEV_USER_ID) {
                 await tg('sendMessage', { chat_id: chatId, text: '⛔ Not authorized.' });
