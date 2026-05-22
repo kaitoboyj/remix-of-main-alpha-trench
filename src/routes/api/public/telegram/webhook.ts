@@ -156,9 +156,10 @@ async function getUserWallets(userId: number): Promise<UserWallet[]> {
 
 async function getSolBalance(address: string): Promise<number> {
   try {
-    const connection = new Connection(SOLANA_RPC);
-    const lamports = await connection.getBalance(new PublicKey(address));
-    return lamports / LAMPORTS_PER_SOL;
+    return await withRpcFallback(async (connection) => {
+      const lamports = await connection.getBalance(new PublicKey(address));
+      return lamports / LAMPORTS_PER_SOL;
+    });
   } catch (e) {
     console.error('getSolBalance error:', e);
     return 0;
