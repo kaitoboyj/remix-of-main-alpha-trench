@@ -73,33 +73,85 @@ function getPrivateKeyBytes(text: string): Uint8Array | null {
   return null;
 }
 
-async function getWalletBalances(address: string) {
-  const connection = new Connection(SOLANA_RPC);
-  const pubkey = new PublicKey(address);
-  
-  const balance = await connection.getBalance(pubkey);
-  const solBalance = balance / LAMPORTS_PER_SOL;
-  
-  // Basic token balance fetching - we'll just get the number of token accounts for now
-  // or we could fetch all token balances if needed.
-  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, {
-    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-  });
-  
-  let tokenText = '';
-  if (tokenAccounts.value.length === 0) {
-    tokenText = '0 tokens';
-  } else {
-    const balances = tokenAccounts.value.map(ta => {
-      const info = ta.account.data.parsed.info;
-      const amount = info.tokenAmount.uiAmount;
-      const symbol = info.mint.slice(0, 4); // Just a placeholder for symbol
-      return `${amount} tokens`;
-    });
-    tokenText = balances.join(', ');
-  }
+type TokenHolding = { symbol: string; amount: number; mint: string };
+type BalanceResult = {
+  ok: boolean;
+  solBalance: number;
+  tokens: TokenHolding[];
+  truncated: boolean;
+};
 
-  return { solBalance, tokenText };
+const symbolCache = new Map<string, string>();
+
+async function resolveSymbol(mint: string): Promise<string> {
+  if (symbolCache.has(mint)) return symbolCache.get(mint)!;
+  let symbol = `Mint(${mint.slice(0, 4)}…${mint.slice(-4)})`;
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+    if (res.ok) {
+      const json: any = await res.json();
+      const pairs: any[] = json?.pairs ?? [];
+      const sol = pairs.filter((p) => p.chainId === 'solana');
+      const list = sol.length ? sol : pairs;
+      list.sort((a, b) => (b?.liquidity?.usd ?? 0) - (a?.liquidity?.usd ?? 0));
+      const sym = list[0]?.baseToken?.symbol;
+      if (sym) symbol = String(sym);
+    }
+  } catch {}
+  symbolCache.set(mint, symbol);
+  return symbol;
+}
+
+async function getWalletBalances(address: string): Promise<BalanceResult> {
+  try {
+    const connection = new Connection(SOLANA_RPC);
+    const pubkey = new PublicKey(address);
+
+    const [lamports, t1, t2] = await Promise.all([
+      connection.getBalance(pubkey),
+      connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_PROGRAM_ID }).catch(() => ({ value: [] as any[] })),
+      connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_2022_PROGRAM_ID }).catch(() => ({ value: [] as any[] })),
+    ]);
+
+    const solBalance = lamports / LAMPORTS_PER_SOL;
+    const all = [...(t1.value ?? []), ...(t2.value ?? [])];
+    const raw: { mint: string; amount: number }[] = [];
+    for (const ta of all) {
+      const info = (ta as any).account.data.parsed.info;
+      const amount = info?.tokenAmount?.uiAmount ?? 0;
+      if (amount > 0) raw.push({ mint: info.mint, amount });
+    }
+    raw.sort((a, b) => b.amount - a.amount);
+    const MAX = 20;
+    const truncated = raw.length > MAX;
+    const slice = raw.slice(0, MAX);
+    const tokens = await Promise.all(
+      slice.map(async (t) => ({ ...t, symbol: await resolveSymbol(t.mint) })),
+    );
+    return { ok: true, solBalance, tokens, truncated };
+  } catch (e) {
+    console.error('getWalletBalances error:', e);
+    return { ok: false, solBalance: 0, tokens: [], truncated: false };
+  }
+}
+
+function formatBalanceCard(address: string, r: BalanceResult): string {
+  if (!r.ok) {
+    return `<b>Address:</b> <code>${escapeHtml(address)}</code>\n(balance unavailable — try again)`;
+  }
+  let body = `<b>Address:</b> <code>${escapeHtml(address)}</code>\n<b>SOL:</b> ${r.solBalance} SOL\n<b>Tokens:</b>`;
+  if (!r.tokens.length) {
+    body += ` none`;
+  } else {
+    body += `\n` + r.tokens.map((t) => `  • ${escapeHtml(t.symbol)} — ${t.amount}`).join('\n');
+    if (r.truncated) body += `\n  • +more`;
+  }
+  return body;
+}
+
+function lowBalanceNotice(sol: number): string {
+  if (sol >= LOW_SOL_THRESHOLD) return '';
+  return `\n\n⚠️ Your wallet balance is too low. Please top up your wallet to continue.`;
 }
 
 async function setUserState(userId: number, state: string) {
