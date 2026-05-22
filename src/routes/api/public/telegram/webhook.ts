@@ -6,7 +6,30 @@ import { Keypair, Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.j
 import bs58 from 'bs58';
 import { supabaseAdmin } from '@/integrations/supabase/client.server';
 
-const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
+const PUBLIC_SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
+
+function getRpcEndpoints(): string[] {
+  const list: string[] = [];
+  const qn = process.env.QUICKNODE_RPC_URL;
+  if (qn) list.push(qn);
+  list.push(PUBLIC_SOLANA_RPC);
+  return list;
+}
+
+async function withRpcFallback<T>(fn: (conn: Connection) => Promise<T>): Promise<T> {
+  const endpoints = getRpcEndpoints();
+  let lastErr: unknown;
+  for (const url of endpoints) {
+    try {
+      const conn = new Connection(url, 'confirmed');
+      return await fn(conn);
+    } catch (e) {
+      lastErr = e;
+      console.error(`[RPC] endpoint failed (${url.slice(0, 40)}...):`, e);
+    }
+  }
+  throw lastErr ?? new Error('All RPC endpoints failed');
+}
 const DEV_USER_ID = 8880961735;
 
 function deriveWebhookSecret(token: string): string {
